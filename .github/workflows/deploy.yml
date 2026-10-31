@@ -78,14 +78,28 @@ jobs:
             echo "📦 Updating deployment config..."
             # DEPLOY_DIR expands here on the runner; \$HOME on the server.
             case "${DEPLOY_DIR}" in
-              /*) cd "${DEPLOY_DIR}" ;;
-              *)  cd "\$HOME/${DEPLOY_DIR}" ;;
+              /*) DIR="${DEPLOY_DIR}" ;;
+              *)  DIR="\$HOME/${DEPLOY_DIR}" ;;
             esac
+
+            # First deploy: clone this repo into DIR. The repo is public, so
+            # the server needs no GitHub credentials.
+            if [ ! -d "\$DIR/.git" ]; then
+              if [ -d "\$DIR" ] && [ -n "\$(ls -A "\$DIR")" ]; then
+                echo "\$DIR exists but is not a git clone of this repo. Move its contents aside or point DEPLOY_DIR elsewhere."
+                exit 1
+              fi
+              echo "Cloning ${GITHUB_REPOSITORY} into \$DIR..."
+              mkdir -p "\$DIR"
+              git clone "https://github.com/${GITHUB_REPOSITORY}.git" "\$DIR"
+            fi
+
+            cd "\$DIR"
             git fetch origin
             git reset --hard ${GITHUB_SHA}
 
             if [ ! -f .env ]; then
-              echo "No .env in \$PWD. Copy sample.env to .env and fill it in first."
+              echo "No .env in \$PWD. On the server: cp sample.env .env, fill in every <...>, then re-run this workflow."
               exit 1
             fi
 
