@@ -1,0 +1,116 @@
+name: Deploy Afurqan
+
+# Deploys EasyMed to Afurqan Hospital's server. Nothing is built here: the
+# server pulls images the easymed repo's CI already published.
+#
+# Which EasyMed build goes out:
+#   - Run this workflow by hand (Actions -> Deploy Afurqan -> Run workflow) and
+#     give an easymed commit SHA to roll out, or roll back to.
+#   - Otherwise the EASYMED_TAG repository variable is used. Pushing to main
+#     here (a compose or workflow change) redeploys that same version.
+#
+# Required secrets:   DEPLOY_SSH_KEY, DEPLOY_HOST, DEPLOY_USER
+# Required variable:  EASYMED_TAG (unless every deploy is run by hand)
+# Optional variable:  DEPLOY_DIR (default: afurqan-deployment, under the user's home)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      easymed_tag:
+        description: "EasyMed image tag: a full commit SHA from the easymed repo (blank = EASYMED_TAG variable)"
+        required: false
+        type: string
+
+# One deploy at a time; a newer run waits rather than racing an older one.
+concurrency:
+  group: deploy-afurqan
+  cancel-in-progress: false
+
+env:
+  EASYMED_TAG: ${{ inputs.easymed_tag || vars.EASYMED_TAG }}
+  DEPLOY_DIR: ${{ vars.DEPLOY_DIR || 'afurqan-deployment' }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check an EasyMed tag was given
+        run: |
+          if [ -z "${EASYMED_TAG}" ]; then
+            echo "::error::No EasyMed tag. Set the EASYMED_TAG repository variable or pass easymed_tag when running the workflow."
+            exit 1
+          fi
+          echo "Deploying EasyMed ${EASYMED_TAG}"
+
+      # Catches YAML mistakes and missing ${...} values before the server is
+      # touched. sample.env stands in for the server's .env.
+      - name: Validate docker-compose.yml
+        run: |
+          cp sample.env .env
+          docker compose config --quiet
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs:
+      - validate
+
+    env:
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+
+    steps:
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${DEPLOY_SSH_KEY}" | tr -d '\r' > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -T 10 -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts
+
+      # The heredoc is unquoted so the values above expand here, on the runner;
+      # anything meant for the server's shell is escaped (\$).
+      - name: Deploy
+        run: |
+          ssh "${DEPLOY_USER}@${DEPLOY_HOST}" bash -s << EOF
+            set -euo pipefail
+
+            echo "📦 Updating deployment config..."
+            cd \$HOME/${DEPLOY_DIR}
+            git fetch origin
+            git reset --hard ${GITHUB_SHA}
+
+            if [ ! -f .env ]; then
+              echo "No .env in \$PWD. Copy sample.env to .env and fill it in first."
+              exit 1
+            fi
+
+            # Record the tag in .env, so that manual compose commands on the
+            # server run the version that is deployed.
+            if grep -q '^EASYMED_TAG=' .env; then
+              sed -i 's/^EASYMED_TAG=.*/EASYMED_TAG=${EASYMED_TAG}/' .env
+            else
+              echo 'EASYMED_TAG=${EASYMED_TAG}' >> .env
+            fi
+
+            # Pull before touching the running stack: if a pull fails (a tag
+            # that was never published, say), the current containers stay up
+            # and set -e stops the deploy here.
+            echo "⬇️  Pulling EasyMed ${EASYMED_TAG}..."
+            docker compose pull
+
+            echo "🚀 Starting containers..."
+            docker compose up -d --remove-orphans
+
+            # Images no container uses, older than a week. The week keeps recent
+            # versions on disk for a quick rollback; no --volumes, which would
+            # put postgres_data and letsencrypt at risk.
+            echo "🧹 Cleaning up old images..."
+            docker image prune -af --filter "until=168h" || true
+
+            echo "✅ Afurqan is on EasyMed ${EASYMED_TAG}"
+          EOF

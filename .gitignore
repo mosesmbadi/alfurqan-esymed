@@ -1,0 +1,5 @@
+# Real settings and secrets live only on the server.
+.env
+
+# Database dumps written by the backup container.
+backups/

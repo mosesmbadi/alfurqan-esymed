@@ -1,0 +1,164 @@
+# EasyMed deployment for Afurqan Hospital.
+#
+# Nothing is built here. The application images (easymed-backend,
+# easymed-frontend, easymed-nginx, easymed-backup) are built and pushed by the
+# easymed repository's CI; this file pulls them at the tag in EASYMED_TAG.
+#
+# Every setting -- secrets, domain, image tag -- comes from ./.env on the
+# server (copy sample.env to .env and fill it in). The deploy workflow sets
+# EASYMED_TAG itself and records it in .env, so manual commands on the server
+# run the same version that was deployed:
+#
+#   docker compose pull && docker compose up -d
+#
+# Roll back by setting EASYMED_TAG in .env to an earlier commit SHA of the
+# easymed repo and running the two commands above.
+
+name: afurqan
+
+x-easymed-image: &easymed
+  restart: unless-stopped
+  env_file:
+    - ./.env
+  networks:
+    - mks
+
+services:
+  nginx:
+    image: ${EASYMED_IMAGE_NAMESPACE:-mosesmbadi}/easymed-nginx:${EASYMED_TAG:?Set EASYMED_TAG in .env}
+    container_name: nginx
+    restart: always
+    # The image renders its server block from NGINX_SERVER_NAME and
+    # NGINX_CERT_DOMAIN when it starts.
+    env_file:
+      - ./.env
+    volumes:
+      - /var/log/nginx:/var/log/nginx
+      - letsencrypt:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    depends_on:
+      - frontend
+    ports:
+      - 80:80
+      - 443:443
+    networks:
+      - mks
+
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    entrypoint: /bin/sh -c
+    command: >
+      "trap exit TERM; while :; do sleep 6h & wait $${!}; certbot renew --webroot -w /var/www/certbot; done"
+
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    # Localhost only: the app reaches it over the compose network. Kept
+    # reachable from the server itself for psql and ad-hoc dumps.
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - mks
+
+  redis:
+    image: redis:7.0-alpine
+    container_name: redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --replica-read-only no
+    volumes:
+      - redis:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - mks
+
+  backend:
+    <<: *easymed
+    image: ${EASYMED_IMAGE_NAMESPACE:-mosesmbadi}/easymed-backend:${EASYMED_TAG:?Set EASYMED_TAG in .env}
+    # The frontend image reaches the backend at http://api:8080/, so this
+    # container name is part of the contract with the image; don't rename it.
+    container_name: api
+    command: uvicorn --host 0.0.0.0 --port 8080 easymed.asgi:application
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      - redis
+      - postgres
+
+  worker:
+    <<: *easymed
+    image: ${EASYMED_IMAGE_NAMESPACE:-mosesmbadi}/easymed-backend:${EASYMED_TAG:?Set EASYMED_TAG in .env}
+    container_name: worker
+    command: celery -A easymed worker --loglevel=INFO
+    entrypoint: [] # Skip the entrypoint: migrations run in the backend container
+    depends_on:
+      - backend
+      - redis
+      - postgres
+
+  beat:
+    <<: *easymed
+    image: ${EASYMED_IMAGE_NAMESPACE:-mosesmbadi}/easymed-backend:${EASYMED_TAG:?Set EASYMED_TAG in .env}
+    container_name: beat
+    # Scheduled jobs: re-order alerts, expiry write-offs, reservation expiry,
+    # stock reconciliation, ward medication reminders.
+    command: celery -A easymed beat --loglevel=INFO --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    entrypoint: []
+    depends_on:
+      - backend
+      - redis
+      - postgres
+
+  frontend:
+    <<: *easymed
+    image: ${EASYMED_IMAGE_NAMESPACE:-mosesmbadi}/easymed-frontend:${EASYMED_TAG:?Set EASYMED_TAG in .env}
+    container_name: front-end
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - backend
+
+  lis_server:
+    image: mosesmbadi/hl7-astm-parser:latest
+    container_name: lis-server
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app/src
+    command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "9091"]
+    # Public: lab analysers connect to it.
+    ports:
+      - 9091:9091
+    networks:
+      - mks
+
+  backup:
+    <<: *easymed
+    image: ${EASYMED_IMAGE_NAMESPACE:-mosesmbadi}/easymed-backup:${EASYMED_TAG:?Set EASYMED_TAG in .env}
+    container_name: backup
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
+  redis:
+  letsencrypt:
+  certbot-www:
+
+networks:
+  mks:
+    name: afurqan
+    driver: bridge
