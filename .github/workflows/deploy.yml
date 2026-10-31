@@ -4,13 +4,12 @@ name: Deploy Afurqan
 # server pulls images the easymed repo's CI already published.
 #
 # Which EasyMed build goes out:
-#   - Run this workflow by hand (Actions -> Deploy Afurqan -> Run workflow) and
-#     give an easymed commit SHA to roll out, or roll back to.
-#   - Otherwise the EASYMED_TAG repository variable is used. Pushing to main
-#     here (a compose or workflow change) redeploys that same version.
+#   - By default, `latest`: the newest build of easymed's main branch. This
+#     applies to pushes to main here and to manual runs left blank.
+#   - To roll back or pin, run this workflow by hand (Actions -> Deploy
+#     Afurqan -> Run workflow) and give a full easymed commit SHA.
 #
 # Required secrets:   DEPLOY_SSH_KEY, DEPLOY_HOST, DEPLOY_USER
-# Required variable:  EASYMED_TAG (unless every deploy is run by hand)
 # Optional variable:  DEPLOY_DIR (default: afurqan-deployment, under the user's home)
 
 on:
@@ -19,8 +18,9 @@ on:
   workflow_dispatch:
     inputs:
       easymed_tag:
-        description: "EasyMed image tag: a full commit SHA from the easymed repo (blank = EASYMED_TAG variable)"
+        description: "EasyMed image tag (blank = latest). Give a full easymed commit SHA to roll back or pin."
         required: false
+        default: ""
         type: string
 
 # One deploy at a time; a newer run waits rather than racing an older one.
@@ -29,7 +29,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  EASYMED_TAG: ${{ inputs.easymed_tag || vars.EASYMED_TAG }}
+  EASYMED_TAG: ${{ inputs.easymed_tag || 'latest' }}
   DEPLOY_DIR: ${{ vars.DEPLOY_DIR || 'afurqan-deployment' }}
 
 jobs:
@@ -39,13 +39,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check an EasyMed tag was given
-        run: |
-          if [ -z "${EASYMED_TAG}" ]; then
-            echo "::error::No EasyMed tag. Set the EASYMED_TAG repository variable or pass easymed_tag when running the workflow."
-            exit 1
-          fi
-          echo "Deploying EasyMed ${EASYMED_TAG}"
+      - name: Show EasyMed tag
+        run: echo "Deploying EasyMed ${EASYMED_TAG}"
 
       # Catches YAML mistakes and missing ${...} values before the server is
       # touched. sample.env stands in for the server's .env.
