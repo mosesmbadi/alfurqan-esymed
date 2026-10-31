@@ -1,0 +1,19 @@
+# Public entry point for Afurqan's EasyMed. Caddy gets and renews the Let's
+# Encrypt certificate for SITE_DOMAIN by itself, and redirects HTTP to HTTPS.
+# Certificates live in the caddy_data volume, so restarts don't re-issue them.
+#
+# SITE_DOMAIN comes from .env (see sample.env). Ports 80 and 443 on the server
+# must be open, and the domain's DNS A record must point at the server, or
+# certificate issuance fails.
+
+{$SITE_DOMAIN} {
+	encode zstd gzip
+
+	# The frontend serves the whole app, and talks to the backend over the
+	# compose network itself. WebSocket upgrades pass through automatically.
+	reverse_proxy frontend:3000
+
+	log {
+		output stdout
+	}
+}

@@ -1,8 +1,9 @@
 # EasyMed deployment for Afurqan Hospital.
 #
 # Nothing is built here. The application images (easymed-backend,
-# easymed-frontend, easymed-nginx, easymed-backup) are built and pushed by the
-# easymed repository's CI; this file pulls them at the tag in EASYMED_TAG.
+# easymed-frontend, easymed-backup) are built and pushed by the easymed
+# repository's CI; this file pulls them at the tag in EASYMED_TAG. HTTPS is
+# handled by Caddy (see Caddyfile), not the easymed-nginx image.
 #
 # Every setting -- secrets, domain, image tag -- comes from ./.env on the
 # server (copy sample.env to .env and fill it in). The deploy workflow sets
@@ -24,35 +25,26 @@ x-easymed-image: &easymed
     - mks
 
 services:
-  nginx:
-    image: ${EASYMED_IMAGE_NAMESPACE:-mosesmbadi}/easymed-nginx:${EASYMED_TAG:?Set EASYMED_TAG in .env}
-    container_name: nginx
+  caddy:
+    image: caddy:2
+    container_name: caddy
     restart: always
-    # The image renders its server block from NGINX_SERVER_NAME and
-    # NGINX_CERT_DOMAIN when it starts.
-    env_file:
-      - ./.env
+    # Terminates HTTPS for SITE_DOMAIN and proxies to the frontend. See
+    # Caddyfile; certificates are issued and renewed automatically.
+    environment:
+      - SITE_DOMAIN=${SITE_DOMAIN:-lim-alfurqan.proto-typesolution.com}
     volumes:
-      - /var/log/nginx:/var/log/nginx
-      - letsencrypt:/etc/letsencrypt
-      - certbot-www:/var/www/certbot
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
     depends_on:
       - frontend
     ports:
       - 80:80
       - 443:443
+      - 443:443/udp
     networks:
       - mks
-
-  certbot:
-    image: certbot/certbot
-    restart: unless-stopped
-    volumes:
-      - letsencrypt:/etc/letsencrypt
-      - certbot-www:/var/www/certbot
-    entrypoint: /bin/sh -c
-    command: >
-      "trap exit TERM; while :; do sleep 6h & wait $${!}; certbot renew --webroot -w /var/www/certbot; done"
 
   postgres:
     image: postgres:15
@@ -155,8 +147,8 @@ services:
 volumes:
   postgres_data:
   redis:
-  letsencrypt:
-  certbot-www:
+  caddy_data:
+  caddy_config:
 
 networks:
   mks:
