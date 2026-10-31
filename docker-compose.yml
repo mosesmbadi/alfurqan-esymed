@@ -32,7 +32,7 @@ services:
     # Terminates HTTPS for SITE_DOMAIN and proxies to the frontend. See
     # Caddyfile; certificates are issued and renewed automatically.
     environment:
-      - SITE_DOMAIN=${SITE_DOMAIN:-lim-alfurqan.proto-typesolution.com}
+      - SITE_DOMAIN=${SITE_DOMAIN:-lim-alfurqan.proto-typesolutions.com}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

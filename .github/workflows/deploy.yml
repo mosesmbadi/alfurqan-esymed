@@ -53,7 +53,7 @@ jobs:
       - name: Validate Caddyfile
         run: |
           docker run --rm \
-            -e SITE_DOMAIN=lim-alfurqan.proto-typesolution.com \
+            -e SITE_DOMAIN=lim-alfurqan.proto-typesolutions.com \
             -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
