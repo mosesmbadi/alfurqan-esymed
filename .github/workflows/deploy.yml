@@ -10,7 +10,8 @@ name: Deploy Afurqan
 #     Afurqan -> Run workflow) and give a full easymed commit SHA.
 #
 # Required secrets:   DEPLOY_SSH_KEY, DEPLOY_HOST, DEPLOY_USER
-# Optional variable:  DEPLOY_DIR (default: afurqan-deployment, under the user's home)
+# Optional:           DEPLOY_DIR, as a variable or a secret. An absolute path, or a
+#                     path under the deploy user's home (default: afurqan-deployment).
 
 on:
   push:
@@ -30,7 +31,7 @@ concurrency:
 
 env:
   EASYMED_TAG: ${{ inputs.easymed_tag || 'latest' }}
-  DEPLOY_DIR: ${{ vars.DEPLOY_DIR || 'afurqan-deployment' }}
+  DEPLOY_DIR: ${{ vars.DEPLOY_DIR || secrets.DEPLOY_DIR || 'afurqan-deployment' }}
 
 jobs:
   validate:
@@ -75,7 +76,11 @@ jobs:
             set -euo pipefail
 
             echo "📦 Updating deployment config..."
-            cd \$HOME/${DEPLOY_DIR}
+            # DEPLOY_DIR expands here on the runner; \$HOME on the server.
+            case "${DEPLOY_DIR}" in
+              /*) cd "${DEPLOY_DIR}" ;;
+              *)  cd "\$HOME/${DEPLOY_DIR}" ;;
+            esac
             git fetch origin
             git reset --hard ${GITHUB_SHA}
 
