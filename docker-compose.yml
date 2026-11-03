@@ -125,12 +125,11 @@ services:
     image: mosesmbadi/hl7-astm-parser:latest
     container_name: lis-server
     restart: unless-stopped
+    # Configured entirely from the LIS SERVER block in ./.env (see sample.env).
     env_file:
       - ./.env
-    environment:
-      - PYTHONUNBUFFERED=1
-      - PYTHONPATH=/app/src
-    command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "9091"]
+    depends_on:
+      - backend
     # Public: lab analysers connect to it.
     ports:
       - 9091:9091
