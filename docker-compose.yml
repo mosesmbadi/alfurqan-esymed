@@ -84,6 +84,12 @@ services:
     # Plain HTTP, so traffic (including admin logins) is unencrypted.
     ports:
       - 8080:8080
+    # Uploaded files: the company logo, staff signatures, referral and
+    # requisition documents. This path is Django's MEDIA_ROOT. Without a volume
+    # they live in the container and are lost whenever a deploy recreates it,
+    # while the database keeps pointing at them.
+    volumes:
+      - media:/app/easymed/static/images
     depends_on:
       - redis
       - postgres
@@ -130,6 +136,10 @@ services:
       - ./.env
     depends_on:
       - backend
+    # Results the backend could not take yet wait here and are retried; a
+    # volume, so they survive the container being recreated.
+    volumes:
+      - lis_spool:/app/spool
     # Public: lab analysers connect to it.
     ports:
       - 9091:9091
@@ -150,6 +160,8 @@ volumes:
   redis:
   caddy_data:
   caddy_config:
+  lis_spool:
+  media:
 
 networks:
   mks:
