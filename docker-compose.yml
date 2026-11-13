@@ -24,6 +24,15 @@ x-easymed-image: &easymed
   networks:
     - mks
 
+# Memory ceilings. The server has 1.9 GB and the app containers have no limit
+# by default, so one that keeps growing (the API reached ~570 MB on
+# 2026-11-13) starves the whole host until even SSH stops answering. With a
+# limit, the kernel kills just that container and `restart` brings it back in
+# seconds. memswap_limit equals mem_limit so a container at its ceiling is
+# killed rather than allowed to push the host into swap.
+# Normal use (docker stats): api ~225 MB, worker ~230 MB, beat ~145 MB,
+# frontend ~125 MB, lis_server ~45 MB.
+
 services:
   caddy:
     image: caddy:2
@@ -80,6 +89,8 @@ services:
     # container name is part of the contract with the image; don't rename it.
     container_name: api
     command: uvicorn --host 0.0.0.0 --port 8080 easymed.asgi:application
+    mem_limit: 700m
+    memswap_limit: 700m
     # Public: the Django admin is reached directly at http://<server-ip>:8080/admin/.
     # Plain HTTP, so traffic (including admin logins) is unencrypted.
     ports:
@@ -99,6 +110,8 @@ services:
     image: ${EASYMED_IMAGE_NAMESPACE:-mosesmbadi}/easymed-backend:${EASYMED_TAG:?Set EASYMED_TAG in .env}
     container_name: worker
     command: celery -A easymed worker --loglevel=INFO
+    mem_limit: 450m
+    memswap_limit: 450m
     entrypoint: [] # Skip the entrypoint: migrations run in the backend container
     depends_on:
       - backend
@@ -112,6 +125,8 @@ services:
     # Scheduled jobs: re-order alerts, expiry write-offs, reservation expiry,
     # stock reconciliation, ward medication reminders.
     command: celery -A easymed beat --loglevel=INFO --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    mem_limit: 250m
+    memswap_limit: 250m
     entrypoint: []
     depends_on:
       - backend
@@ -122,6 +137,8 @@ services:
     <<: *easymed
     image: ${EASYMED_IMAGE_NAMESPACE:-mosesmbadi}/easymed-frontend:${EASYMED_TAG:?Set EASYMED_TAG in .env}
     container_name: front-end
+    mem_limit: 350m
+    memswap_limit: 350m
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:
@@ -131,6 +148,9 @@ services:
     image: mosesmbadi/hl7-astm-parser:latest
     container_name: lis-server
     restart: unless-stopped
+    # ~45 MB normally; it was OOM-killed at ~400 MB on 2026-11-12.
+    mem_limit: 200m
+    memswap_limit: 200m
     # Configured entirely from the LIS SERVER block in ./.env (see sample.env).
     env_file:
       - ./.env
